@@ -5,13 +5,11 @@ const multer = require('multer');
 require('dotenv').config();
 const fs = require('fs');
 const xlsx = require('xlsx');
-const bodyParser = require("body-parser");
-const crypto = require('crypto');
-
+const bodyParser =require("body-parser")
 const app = express();
 const port = process.env.PORT || 3000;
 
-const upload = multer({ dest: 'uploads/' });
+const upload = multer({ dest:'uploads/'});
 
 app.use(cors());
 app.use(bodyParser.json());
@@ -23,26 +21,15 @@ const openai = new OpenAI({
 const userThreads = new Map();
 const userFinancialData = new Map();
 
-// Function to generate a new session ID
-function generateSessionId() {
-  return crypto.randomBytes(16).toString('hex');
-}
-
-// Middleware to check and assign session ID
-app.use((req, res, next) => {
-  if (!req.headers['session-id']) {
-    req.headers['session-id'] = generateSessionId();
-  }
-  next();
-});
 
 app.post('/chat', async (req, res) => {
-  const sessionId = req.headers['session-id'];
-  const message = req.body.message || "";
+  const { userId } = req.body;
+  const message = req.body.message || ""; 
 
   try {
-    if (!userThreads.has(sessionId)) {
-      userThreads.set(sessionId, [{
+    if (!userThreads.has(userId)) {
+
+      userThreads.set(userId, [{
         role: 'system',
         content: `You are a professional financial advisor and analyst. Your role is to provide accurate, detailed, and helpful responses to users' financial questions. When answering:
 
@@ -61,9 +48,9 @@ When asked to forecast financial data:
 
 Always maintain a professional tone and prioritize accuracy in your responses. If you're unsure about any information, state that clearly and suggest where the user might find more reliable data.`
       }]);
-    }
+}
 
-    const messages = userThreads.get(sessionId);
+    const messages = userThreads.get(userId);
     messages.push({ role: 'user', content: message });
 
     const response = await openai.chat.completions.create({
@@ -73,22 +60,22 @@ Always maintain a professional tone and prioritize accuracy in your responses. I
 
     const assistantMessage = response.choices[0].message.content;
     messages.push({ role: 'assistant', content: assistantMessage });
-    res.json({ response: assistantMessage, sessionId: sessionId });
+    res.json({ response: assistantMessage });
   } catch (error) {
     console.error('Error:', error);
     res.status(500).json({ error: 'An error occurred while processing your request.' });
   }
 });
 
-app.get('/history', async (req, res) => {
-  const sessionId = req.headers['session-id'];
-  const messages = userThreads.get(sessionId) || [];
-  res.json({ messages: messages.slice(-25), sessionId: sessionId });
+app.get('/history/:userId', async (req, res) => {
+  const { userId } = req.params;
+  const messages = userThreads.get(userId) || [];
+  res.json({ messages: messages.slice(-25) });
 });
 
 app.post('/upload', upload.single('file'), async (req, res) => {
   const uploadedFile = req.file;
-  const sessionId = req.headers['session-id'];
+  const { userId } = req.body; 
   if (!uploadedFile) {
     return res.status(400).json({ message: 'No file uploaded' });
   }
@@ -102,8 +89,8 @@ app.post('/upload', upload.single('file'), async (req, res) => {
 
     const dataString = JSON.stringify(jsonData, null, 2);
 
-    if (!userThreads.has(sessionId)) {
-      userThreads.set(sessionId, [{
+    if (!userThreads.has(userId)) {
+      userThreads.set(userId, [{
         role: 'system',
         content: `You are a professional financial advisor and analyst. Your role is to provide accurate, detailed, and helpful responses to users' financial questions. When answering:
 
@@ -121,10 +108,11 @@ When asked to forecast financial data:
 5. Explain the limitations of the forecast and any potential factors that could influence the outcomes.
 
 Always maintain a professional tone and prioritize accuracy in your responses. If you're unsure about any information, state that clearly and suggest where the user might find more reliable data.`
+
       }]);
     }
 
-    const messages = userThreads.get(sessionId);
+    const messages = userThreads.get(userId);
     messages.push({ 
       role: 'user', 
       content: `Here's the financial data I've uploaded: ${dataString}. Please analyze this data and prepare to answer questions about it.`
@@ -138,12 +126,11 @@ Always maintain a professional tone and prioritize accuracy in your responses. I
     const assistantMessage = response.choices[0].message.content;
     messages.push({ role: 'assistant', content: assistantMessage });
 
-    userFinancialData.set(sessionId, jsonData);
+    userFinancialData.set(userId, jsonData);
 
     res.json({ 
       message: 'File processed successfully. The AI is analyzing your data. You can now ask questions about your financial data.',
-      dataReceived: true,
-      sessionId: sessionId
+      dataReceived: true
     });
     
   } catch (error) {
@@ -157,28 +144,16 @@ Always maintain a professional tone and prioritize accuracy in your responses. I
     }
   }
 });
-
-app.get('/financial-data', (req, res) => {
-  const sessionId = req.headers['session-id'];
-  const data = userFinancialData.get(sessionId);
+app.get('/financial-data/:userId', (req, res) => {
+  const { userId } = req.params;
+  const data = userFinancialData.get(userId);
   
   if (data) {
-    res.json({ data, sessionId: sessionId });
+    res.json({ data });
   } else {
-    res.status(404).json({ message: 'No financial data found for this session' });
+    res.status(404).json({ message: 'No financial data found for this user' });
   }
 });
-
-// Clean up old sessions periodically
-setInterval(() => {
-  const now = Date.now();
-  for (let [sessionId, thread] of userThreads.entries()) {
-    if (now - thread.timestamp > 24 * 60 * 60 * 1000) { // 24 hours
-      userThreads.delete(sessionId);
-      userFinancialData.delete(sessionId);
-    }
-  }
-}, 60 * 60 * 1000); // Run every hour
 
 app.listen(port, () => {
   console.log(`Server running on port ${port}`);
